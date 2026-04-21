@@ -1,0 +1,22 @@
+# Build outputs
+/build/
+rtsp-server
+*.o
+*.a
+*.so
+*.d
+
+# Generated media/logs
+*.log
+*.pid
+*.sdp
+*.h264
+*.mp4
+*.mkv
+*.avi
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
