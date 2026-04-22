@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <sys/types.h>
 
 class RtspServer {
 public:
@@ -31,6 +32,7 @@ private:
         int server_rtp_port = 0;
         int server_rtcp_port = 0;
         bool setup_complete = false;
+        pid_t stream_pid = -1;
     };
 
     void open_listener();
@@ -40,6 +42,8 @@ private:
     bool write_to(Client& client);
     void process_requests(Client& client);
     rtsp::Response handle_request(Client& client, const rtsp::Request& request);
+    bool start_stream(Client& client);
+    void stop_stream(Client& client);
     std::pair<int, int> allocate_server_ports() const;
 
     std::filesystem::path root_;

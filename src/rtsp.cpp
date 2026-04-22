@@ -30,6 +30,10 @@ std::string path_from_uri(const std::string& uri) {
     if (query != std::string::npos) {
         path.resize(query);
     }
+    const std::string track_suffix = "/trackID=0";
+    if (path.ends_with(track_suffix)) {
+        path.resize(path.size() - track_suffix.size());
+    }
     return path;
 }
 
@@ -126,8 +130,8 @@ std::string make_sdp(const std::string& server_host, const std::string& uri) {
         << "a=control:*\r\n"
         << "m=video 0 RTP/AVP 96\r\n"
         << "a=rtpmap:96 H264/90000\r\n"
-        << "a=fmtp:96 packetization-mode=1\r\n"
-        << "a=control:" << uri << "/trackID=0\r\n";
+        << "a=fmtp:96 packetization-mode=1;profile-level-id=42e01f\r\n"
+        << "a=control:trackID=0\r\n";
     return sdp.str();
 }
 

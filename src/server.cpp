@@ -5,12 +5,14 @@
 #include <netdb.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <random>
 #include <stdexcept>
 
@@ -69,6 +71,7 @@ RtspServer::RtspServer(std::filesystem::path root, std::string host, int port)
 
 RtspServer::~RtspServer() {
     for (auto& client : clients_) {
+        stop_stream(client);
         close_fd(client.fd);
     }
     close_fd(listen_fd_);
@@ -178,6 +181,7 @@ void RtspServer::accept_client() {
 
 void RtspServer::close_client(size_t index) {
     std::cerr << "client disconnected session=" << clients_[index].session_id << '\n';
+    stop_stream(clients_[index]);
     close_fd(clients_[index].fd);
     clients_.erase(clients_.begin() + static_cast<std::ptrdiff_t>(index));
 }
@@ -290,6 +294,9 @@ rtsp::Response RtspServer::handle_request(Client& client, const rtsp::Request& r
         if (!client.setup_complete) {
             return response_for(request, 455);
         }
+        if (!start_stream(client)) {
+            return response_for(request, 500);
+        }
         auto response = response_for(request, 200);
         response.headers["Session"] = client.session_id;
         response.headers["Range"] = "npt=0.000-";
@@ -300,12 +307,119 @@ rtsp::Response RtspServer::handle_request(Client& client, const rtsp::Request& r
     return response_for(request, 501);
 }
 
+bool RtspServer::start_stream(Client& client) {
+    if (client.stream_pid > 0) {
+        int status = 0;
+        auto rc = waitpid(client.stream_pid, &status, WNOHANG);
+        if (rc == 0) {
+            return true;
+        }
+        client.stream_pid = -1;
+    }
+
+    std::ostringstream target;
+    target << "rtp://";
+    if (client.peer_ip.find(':') != std::string::npos) {
+        target << '[' << client.peer_ip << ']';
+    } else {
+        target << client.peer_ip;
+    }
+    target << ':' << client.client_rtp_port
+           << "?localrtpport=" << client.server_rtp_port
+           << "&localrtcpport=" << client.server_rtcp_port
+           << "&pkt_size=1200";
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "failed to fork ffmpeg: " << std::strerror(errno) << '\n';
+        return false;
+    }
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > STDERR_FILENO) {
+                close(devnull);
+            }
+        }
+
+        const std::string input = client.media_path.string();
+        const std::string url = target.str();
+        execlp("ffmpeg", "ffmpeg",
+               "-nostdin",
+               "-hide_banner",
+               "-loglevel", "error",
+               "-re",
+               "-stream_loop", "-1",
+               "-i", input.c_str(),
+               "-an",
+               "-c:v", "libx264",
+               "-preset", "ultrafast",
+               "-tune", "zerolatency",
+               "-pix_fmt", "yuv420p",
+               "-f", "rtp",
+               "-payload_type", "96",
+               url.c_str(),
+               static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    client.stream_pid = pid;
+    std::cerr << "started ffmpeg pid=" << pid << " session=" << client.session_id
+              << " target=" << target.str() << " file=" << client.media_path << '\n';
+    return true;
+}
+
+void RtspServer::stop_stream(Client& client) {
+    if (client.stream_pid <= 0) {
+        return;
+    }
+    int status = 0;
+    if (waitpid(client.stream_pid, &status, WNOHANG) == 0) {
+        kill(client.stream_pid, SIGTERM);
+        for (int i = 0; i < 20; ++i) {
+            if (waitpid(client.stream_pid, &status, WNOHANG) != 0) {
+                client.stream_pid = -1;
+                return;
+            }
+            usleep(50000);
+        }
+        kill(client.stream_pid, SIGKILL);
+        waitpid(client.stream_pid, &status, 0);
+    }
+    client.stream_pid = -1;
+}
+
 std::pair<int, int> RtspServer::allocate_server_ports() const {
     static int next = 10000;
-    int rtp = next;
-    next += 2;
-    if (next > 20000) {
-        next = 10000;
+    for (int attempt = 0; attempt < 5000; ++attempt) {
+        int rtp = next;
+        next += 2;
+        if (next > 20000) {
+            next = 10000;
+        }
+
+        int rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        int rtcp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (rtp_fd < 0 || rtcp_fd < 0) {
+            close_fd(rtp_fd);
+            close_fd(rtcp_fd);
+            continue;
+        }
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(static_cast<uint16_t>(rtp));
+        bool ok = bind(rtp_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+        addr.sin_port = htons(static_cast<uint16_t>(rtp + 1));
+        ok = ok && bind(rtcp_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+        close_fd(rtp_fd);
+        close_fd(rtcp_fd);
+        if (ok) {
+            return {rtp, rtp + 1};
+        }
     }
-    return {rtp, rtp + 1};
+    throw std::runtime_error("no UDP RTP port pair available");
 }
