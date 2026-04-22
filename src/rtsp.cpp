@@ -120,7 +120,7 @@ std::optional<std::filesystem::path> resolve_media_path(const std::filesystem::p
     return candidate;
 }
 
-std::string make_sdp(const std::string& server_host, const std::string& uri) {
+std::string make_sdp(const std::string& server_host, const std::string&) {
     std::ostringstream sdp;
     sdp << "v=0\r\n"
         << "o=- 0 0 IN IP4 " << server_host << "\r\n"
