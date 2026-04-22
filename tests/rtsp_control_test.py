@@ -26,16 +26,15 @@ class RtspControlPlaneTest(unittest.TestCase):
         self.port = free_port()
         self.proc = subprocess.Popen(
             [str(SERVER), str(self.media_dir), f"127.0.0.1:{self.port}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
             text=True,
         )
         deadline = time.time() + 5
         while time.time() < deadline:
             if self.proc.poll() is not None:
-                stderr = self.proc.stderr.read() if self.proc.stderr else ""
-                self.fail(f"server exited early: {stderr}")
+                self.fail("server exited early")
             try:
                 with socket.create_connection(("127.0.0.1", self.port), timeout=0.1):
                     return
