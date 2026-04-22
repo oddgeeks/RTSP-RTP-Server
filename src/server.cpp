@@ -246,7 +246,7 @@ void RtspServer::process_requests(Client& client) {
 rtsp::Response RtspServer::handle_request(Client& client, const rtsp::Request& request) {
     if (request.method == "OPTIONS") {
         auto response = response_for(request, 200);
-        response.headers["Public"] = "OPTIONS, DESCRIBE, SETUP, PLAY";
+        response.headers["Public"] = "OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN";
         return response;
     }
 
@@ -301,7 +301,15 @@ rtsp::Response RtspServer::handle_request(Client& client, const rtsp::Request& r
         auto response = response_for(request, 200);
         response.headers["Session"] = client.session_id;
         response.headers["Range"] = "npt=0.000-";
-        response.headers["RTP-Info"] = "url=" + client.uri + ";seq=0;rtptime=0";
+        response.headers["RTP-Info"] = "url=" + request.uri + ";seq=0;rtptime=0";
+        return response;
+    }
+
+    if (request.method == "TEARDOWN") {
+        stop_stream(client);
+        client.setup_complete = false;
+        auto response = response_for(request, 200);
+        response.headers["Session"] = client.session_id;
         return response;
     }
 
@@ -359,9 +367,10 @@ bool RtspServer::start_stream(Client& client) {
                "-c:v", "libx264",
                "-preset", "ultrafast",
                "-tune", "zerolatency",
+               "-g", "30",
+               "-x264-params", "repeat-headers=1",
                "-pix_fmt", "yuv420p",
-               "-f", "rtp",
-               "-payload_type", "96",
+               "-f", "rtp_mpegts",
                url.c_str(),
                static_cast<char*>(nullptr));
         _exit(127);

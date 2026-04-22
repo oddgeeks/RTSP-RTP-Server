@@ -64,7 +64,7 @@ class RtspControlPlaneTest(unittest.TestCase):
             "CSeq: 1\r\n\r\n".format(self.port)
         )
         self.assertIn("RTSP/1.0 200 OK", response)
-        self.assertIn("Public: OPTIONS, DESCRIBE, SETUP, PLAY", response)
+        self.assertIn("Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN", response)
         self.assertIn("CSeq: 1", response)
 
     def test_describe_returns_sdp_for_existing_file(self):
@@ -75,7 +75,11 @@ class RtspControlPlaneTest(unittest.TestCase):
         )
         self.assertIn("RTSP/1.0 200 OK", response)
         self.assertIn("Content-Type: application/sdp", response)
-        self.assertIn("m=video 0 RTP/AVP 96", response)
+        self.assertIn("c=IN IP4 127.0.0.1", response)
+        self.assertIn("a=range:npt=0-", response)
+        self.assertIn("a=sendonly", response)
+        self.assertIn("m=video 0 RTP/AVP 33", response)
+        self.assertIn("a=rtpmap:33 MP2T/90000", response)
         self.assertIn("a=control:trackID=0", response)
 
     def test_missing_file_returns_404(self):
@@ -95,6 +99,29 @@ class RtspControlPlaneTest(unittest.TestCase):
         self.assertIn("Session:", response)
         self.assertIn("client_port=5000-5001", response)
         self.assertIn("server_port=", response)
+
+    def test_play_accepts_vlc_stream_uri_after_aggregate_setup(self):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=2) as sock:
+            sock.sendall(
+                (
+                    "SETUP rtsp://127.0.0.1:{}/sample.mp4 RTSP/1.0\r\n"
+                    "CSeq: 5\r\n"
+                    "Transport: RTP/AVP;unicast;client_port=5002-5003\r\n\r\n"
+                ).format(self.port).encode("ascii")
+            )
+            setup = sock.recv(8192).decode("ascii", errors="replace")
+            self.assertIn("RTSP/1.0 200 OK", setup)
+            self.assertIn("Session:", setup)
+
+            sock.sendall(
+                (
+                    "PLAY rtsp://127.0.0.1:{}/stream=0 RTSP/1.0\r\n"
+                    "CSeq: 6\r\n\r\n"
+                ).format(self.port).encode("ascii")
+            )
+            play = sock.recv(8192).decode("ascii", errors="replace")
+            self.assertIn("RTSP/1.0 200 OK", play)
+            self.assertIn("RTP-Info: url=rtsp://127.0.0.1:{}/stream=0".format(self.port), play)
 
 
 if __name__ == "__main__":

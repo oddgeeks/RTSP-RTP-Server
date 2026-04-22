@@ -125,12 +125,13 @@ std::string make_sdp(const std::string& server_host, const std::string&) {
     sdp << "v=0\r\n"
         << "o=- 0 0 IN IP4 " << server_host << "\r\n"
         << "s=Minimal RTSP Server\r\n"
-        << "c=IN IP4 0.0.0.0\r\n"
+        << "c=IN IP4 " << server_host << "\r\n"
         << "t=0 0\r\n"
         << "a=control:*\r\n"
-        << "m=video 0 RTP/AVP 96\r\n"
-        << "a=rtpmap:96 H264/90000\r\n"
-        << "a=fmtp:96 packetization-mode=1;profile-level-id=42e01f\r\n"
+        << "a=range:npt=0-\r\n"
+        << "m=video 0 RTP/AVP 33\r\n"
+        << "a=rtpmap:33 MP2T/90000\r\n"
+        << "a=sendonly\r\n"
         << "a=control:trackID=0\r\n";
     return sdp.str();
 }
