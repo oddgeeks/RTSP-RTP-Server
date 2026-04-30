@@ -1,6 +1,6 @@
 # Minimal RTSP/RTP Video Server
 
-A small C++20 console RTSP server for the Network Optix takehome. It handles `OPTIONS`, `DESCRIBE`, `SETUP`, and `PLAY`, then uses FFmpeg to transcode video to H.264 inside RTP MPEG-TS so VLC can play URLs like:
+A small C++20 console RTSP server for the Network Optix takehome. It handles `OPTIONS`, `DESCRIBE`, `SETUP`, `PLAY`, and `TEARDOWN`, then streams media as RTP MPEG-TS so VLC can play URLs like:
 
 ```bash
 vlc rtsp://127.0.0.1:8554/sample.mp4
@@ -12,7 +12,17 @@ Ubuntu packages needed:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential make ffmpeg python3 vlc
+sudo apt-get install -y \
+  build-essential \
+  libasio-dev \
+  libavcodec-dev \
+  libavformat-dev \
+  libavutil-dev \
+  libswscale-dev \
+  make \
+  pkg-config \
+  python3 \
+  vlc
 ```
 
 Then:
@@ -64,7 +74,7 @@ make test
 Expected result:
 
 ```text
-Ran 4 tests
+Ran 5 tests
 
 OK
 ```
@@ -81,7 +91,8 @@ For manual playback testing, create a small sample file under a media directory:
 
 ```bash
 mkdir -p media
-ffmpeg -f lavfi -i testsrc=size=640x360:rate=30 -t 10 -pix_fmt yuv420p media/sample.mp4
+ffmpeg -f lavfi -i testsrc=size=640x360:rate=30 -t 10 \
+  -c:v libx264 -pix_fmt yuv420p media/sample.mp4
 ```
 
 Start the server with that directory as the media root:
@@ -120,6 +131,12 @@ For verbose VLC diagnostics without the GUI, run:
 cvlc -vvv --intf dummy --play-and-exit --run-time=3 rtsp://127.0.0.1:8554/sample.mp4
 ```
 
+For a lower startup delay in VLC, reduce VLC's RTSP/network cache:
+
+```bash
+vlc --network-caching=300 --rtsp-caching=300 rtsp://127.0.0.1:8554/sample.mp4
+```
+
 ### 4. Headless Playback Smoke Test
 
 If you do not want to use the VLC UI, `ffprobe` can verify that the RTSP/RTP stream is readable:
@@ -144,7 +161,7 @@ h264|640|360
 - If binding to port `554` fails, use a higher port such as `8554`; ports below `1024` often require elevated privileges.
 - If VLC shows a `0` length, that is normal for this live RTSP stream. If video does not appear, run the `ffprobe` smoke test above to separate VLC UI behavior from RTP delivery.
 - If VLC cannot connect, confirm the server is running and the URL filename exists under the directory passed to `./rtsp-server`.
-- If playback starts but no video appears, check that `ffmpeg` is installed and available on `PATH`.
+- If playback starts but no video appears, confirm the media contains a video stream that FFmpeg can demux. The server uses FFmpeg libraries in-process; it does not shell out to the `ffmpeg` command.
 - If testing from another machine, bind to an externally reachable address such as `0.0.0.0:8554` and use the server machine's IP in the RTSP URL.
 
 ## Docker
@@ -160,7 +177,10 @@ Then open `rtsp://127.0.0.1:8554/<filename>` in VLC.
 
 ## Notes
 
-- RTSP control is handled asynchronously with `poll(2)` so multiple clients can connect at once.
-- RTP MPEG-TS media packetization is delegated to one FFmpeg child process per playing client.
+- RTSP control is handled with standalone Asio asynchronous TCP sockets.
+- The server runs a bounded `io_context` thread pool sized from `std::thread::hardware_concurrency()`.
+- The Asio thread pool handles RTSP control-plane I/O; media encoding runs in cancellable in-process stream workers so slow encoders do not block the I/O pool.
+- Streaming is single-process: `PLAY` starts a cancellable in-process worker thread for that session instead of forking an FFmpeg process.
+- Media is decoded and re-encoded in-process to H.264 using FFmpeg libraries with ultrafast/zerolatency settings, then sent as RTP MPEG-TS.
 - `DESCRIBE`/`SETUP` validate paths under the configured root to avoid directory traversal.
-- Playback loops forever using FFmpeg's `-stream_loop -1`.
+- Playback loops continuously until `TEARDOWN` or client disconnect.

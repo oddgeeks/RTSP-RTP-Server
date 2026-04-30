@@ -2,53 +2,47 @@
 
 #include "rtsp.hpp"
 
+#include <utility>
+#include <asio.hpp>
+
+#include <atomic>
+#include <cstddef>
+#include <deque>
 #include <filesystem>
-#include <optional>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
-#include <sys/types.h>
 
 class RtspServer {
 public:
-    RtspServer(std::filesystem::path root, std::string host, int port);
+    RtspServer(std::filesystem::path root,
+               std::string host,
+               int port,
+               std::size_t thread_count = std::thread::hardware_concurrency());
     ~RtspServer();
 
     RtspServer(const RtspServer&) = delete;
     RtspServer& operator=(const RtspServer&) = delete;
 
     int run();
+    void stop();
 
 private:
-    struct Client {
-        int fd = -1;
-        std::string peer_ip;
-        std::string input;
-        std::string output;
-        std::string session_id;
-        std::string uri;
-        std::filesystem::path media_path;
-        int client_rtp_port = 0;
-        int client_rtcp_port = 0;
-        int server_rtp_port = 0;
-        int server_rtcp_port = 0;
-        bool setup_complete = false;
-        pid_t stream_pid = -1;
-    };
+    class Session;
+    class StreamJob;
 
-    void open_listener();
-    void accept_client();
-    void close_client(size_t index);
-    bool read_from(Client& client);
-    bool write_to(Client& client);
-    void process_requests(Client& client);
-    rtsp::Response handle_request(Client& client, const rtsp::Request& request);
-    bool start_stream(Client& client);
-    void stop_stream(Client& client);
-    std::pair<int, int> allocate_server_ports() const;
+    void start_accept();
+    std::string make_session_id();
+    std::pair<int, int> allocate_server_ports();
 
     std::filesystem::path root_;
     std::string host_;
     int port_ = 554;
-    int listen_fd_ = -1;
-    std::vector<Client> clients_;
+    std::size_t thread_count_ = 1;
+    asio::io_context io_;
+    asio::ip::tcp::acceptor acceptor_;
+    std::vector<std::thread> workers_;
+    std::atomic_uint64_t next_session_{1};
+    std::atomic_int next_udp_port_{10000};
 };
